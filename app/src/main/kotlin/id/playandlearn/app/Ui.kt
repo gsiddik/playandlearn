@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +58,52 @@ fun ParentalGate(onPassed: () -> Unit, onCancel: () -> Unit) {
     }
 }
 
+/** Pilihan peran tanpa teks: orang tua (di balik gerbang) atau murid. */
+@Composable
+fun RoleChooser(onParent: () -> Unit, onStudent: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(width = 240.dp, height = 140.dp).background(Color(0xFFBBDEFB), RoundedCornerShape(24.dp)).clickable { onStudent() }, contentAlignment = Alignment.Center) { Text("🎒", fontSize = 72.sp) }
+        Spacer(Modifier.height(24.dp))
+        Box(Modifier.size(width = 240.dp, height = 140.dp).background(Color(0xFFC8E6C9), RoundedCornerShape(24.dp)).clickable { onParent() }, contentAlignment = Alignment.Center) { Text("👨‍👩‍👧", fontSize = 72.sp) }
+    }
+}
+
+/** Urutan gambar PIN baku (sama di semua klien): anjing, kucing, ikan, pohon, mobil, apel, bintang, bulan, balon. */
+val PIN_ICONS = listOf("🐶", "🐱", "🐟", "🌳", "🚗", "🍎", "⭐", "🌙", "🎈")
+
+/** Login murid: pindai QR kartu (atau ketik kode, untuk guru), lalu ketuk 3 gambar PIN. */
+@Composable
+fun StudentLogin(busy: Boolean, error: String?, scan: (onCode: (String) -> Unit) -> Unit, onSubmit: (String, List<Int>) -> Unit, onBack: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    var pin by remember { mutableStateOf(listOf<Int>()) }
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("✖", fontSize = 28.sp, modifier = Modifier.align(Alignment.End).clickable { onBack() })
+        Box(Modifier.padding(16.dp).size(width = 200.dp, height = 100.dp).background(if (code.isEmpty()) Color(0xFFFFF59D) else Color(0xFFA5D6A7), RoundedCornerShape(24.dp))
+            .clickable { scan { code = it } }, contentAlignment = Alignment.Center) { Text(if (code.isEmpty()) "📷" else "✅", fontSize = 56.sp) }
+        Row { repeat(3) { i -> Text(pin.getOrNull(i)?.let { PIN_ICONS[it] } ?: "⚪", fontSize = 44.sp, modifier = Modifier.padding(6.dp)) } }
+        PIN_ICONS.chunked(3).forEachIndexed { r, row ->
+            Row { row.forEachIndexed { c, icon ->
+                Box(Modifier.padding(6.dp).size(72.dp).background(Color(0xFFF5F5F5), RoundedCornerShape(16.dp))
+                    .clickable { if (pin.size < 3) pin = pin + (r * 3 + c) }, contentAlignment = Alignment.Center) { Text(icon, fontSize = 40.sp) }
+            } }
+        }
+        Row(Modifier.padding(top = 12.dp)) {
+            Button(onClick = { pin = pin.dropLast(1) }) { Text("⌫") }
+            Button(enabled = !busy && code.isNotEmpty() && pin.size == 3, onClick = { onSubmit(code, pin) }, modifier = Modifier.padding(start = 12.dp)) { Text("▶") }
+        }
+        if (error != null) Text("⚠ $error")
+    }
+}
+
+@Composable
+fun StudentSettings(onLogout: () -> Unit, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Text("Akun murid", fontSize = 24.sp)
+        Button(onClick = onLogout, modifier = Modifier.padding(top = 12.dp)) { Text("Keluar dari akun murid") }
+        Button(onClick = onBack, modifier = Modifier.padding(top = 8.dp)) { Text("Kembali") }
+    }
+}
+
 @Composable
 fun AuthScreen(busy: Boolean, error: String?, onSubmit: (email: String, password: String, register: Boolean) -> Unit) {
     var email by remember { mutableStateOf("") }
@@ -93,15 +141,15 @@ fun ChildPicker(children: List<ChildDef>, onPick: (ChildDef) -> Unit, onAdd: (St
 
 /** Beranda anak: hanya ikon besar, tanpa teks yang harus dibaca. */
 @Composable
-fun ChildHome(activities: List<ActivityDef>, blockedReason: String?, onPlay: (ActivityDef) -> Unit, onParent: () -> Unit) {
+fun ChildHome(activities: List<ActivityDef>, assigned: Set<String>, blockedReason: String?, onPlay: (ActivityDef) -> Unit, onParent: () -> Unit) {
     val icon = mapOf("sort" to "🎨", "pattern" to "🔷", "count" to "🔢")
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         if (blockedReason != null) {
             Text("😴", fontSize = 96.sp)
             Text(blockedReason, fontSize = 18.sp)
-        } else activities.forEach {
+        } else activities.sortedByDescending { it.id in assigned }.forEach {
             Box(Modifier.padding(12.dp).size(width = 240.dp, height = 120.dp).background(Color(0xFFFFF59D), RoundedCornerShape(24.dp))
-                .clickable { onPlay(it) }, contentAlignment = Alignment.Center) { Text(icon[it.kind] ?: "⭐", fontSize = 64.sp) }
+                .clickable { onPlay(it) }, contentAlignment = Alignment.Center) { Text((if (it.id in assigned) "📌" else "") + (icon[it.kind] ?: "⭐"), fontSize = 64.sp) }
         }
         Text("👨‍👩‍👧", fontSize = 28.sp, modifier = Modifier.padding(top = 24.dp).clickable { onParent() })
     }
