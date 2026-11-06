@@ -11,7 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import com.google.android.gms.code_scanner.GmsBarcodeScanning
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import id.playandlearn.core.LevelPolicy
 import id.playandlearn.core.PlayDecision
 import id.playandlearn.core.ScreenTimeGuard
