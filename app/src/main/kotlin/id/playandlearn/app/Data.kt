@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import id.playandlearn.core.EventType
 import id.playandlearn.core.GameEvent
 import id.playandlearn.core.ScreenTimePolicy
+import id.playandlearn.core.SessionTracker
 import id.playandlearn.core.SyncBatcher
 import id.playandlearn.core.Task
 import org.json.JSONArray
@@ -34,6 +35,10 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx, "pal.db", null, 1) {
     var policyJson: String? get() = prefs.getString("policy", null); set(v) = prefs.edit().putString("policy", v).apply()
     fun levelOf(child: String, activity: String) = prefs.getInt("lvl:$child:$activity", 1)
     fun setLevel(child: String, activity: String, l: Int) = prefs.edit().putInt("lvl:$child:$activity", l).apply()
+
+    var sessionState: SessionTracker.State
+        get() = SessionTracker.State(prefs.getInt("sess_sec", 0), prefs.getLong("sess_end", 0L))
+        set(v) = prefs.edit().putInt("sess_sec", v.sessionSec).putLong("sess_end", v.lastEndMs).apply()
 
     fun playedTodaySeconds(): Int = prefs.getInt("played:${LocalDate.now()}", 0)
     fun addPlayed(sec: Int) = prefs.edit().putInt("played:${LocalDate.now()}", playedTodaySeconds() + sec).apply()

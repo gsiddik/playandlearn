@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import id.playandlearn.core.LevelPolicy
 import id.playandlearn.core.PlayDecision
 import id.playandlearn.core.ScreenTimeGuard
+import id.playandlearn.core.SessionTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,9 +78,11 @@ private fun App(store: Store, api: Api, speak: (String) -> Unit) {
             if (pack == null || c == null) { Screen.Gate.also { screen = it }; return }
             val policy = parsePolicy(store.policyJson)
             val now = LocalTime.now()
-            val decision = ScreenTimeGuard.decide(policy, now.hour * 60 + now.minute, store.playedTodaySeconds() / 60, 0)
+            val decision = ScreenTimeGuard.decide(policy, now.hour * 60 + now.minute, store.playedTodaySeconds() / 60,
+                SessionTracker.sessionMinutes(store.sessionState, System.currentTimeMillis()))
             val blocked = when (decision) {
-                PlayDecision.ALLOWED, PlayDecision.SESSION_BREAK -> null
+                PlayDecision.ALLOWED -> null
+                PlayDecision.SESSION_BREAK -> "Istirahat dulu ya"
                 PlayDecision.DAILY_LIMIT_REACHED -> "Besok main lagi ya!"
                 PlayDecision.OUTSIDE_ALLOWED_HOURS -> "Waktunya istirahat"
             }
@@ -91,7 +94,12 @@ private fun App(store: Store, api: Api, speak: (String) -> Unit) {
             val c = child!!
             val pack = store.packJson!!
             val version = org.json.JSONObject(pack).optInt("version", 1)
-            fun finish() { store.addPlayed(((System.currentTimeMillis() - startedAt) / 1000).toInt()); screen = Screen.Home }
+            fun finish() {
+                val end = System.currentTimeMillis()
+                store.addPlayed(((end - startedAt) / 1000).toInt())
+                store.sessionState = SessionTracker.record(store.sessionState, startedAt, end)
+                screen = Screen.Home
+            }
             LevelScreen(c.id, s.activity, s.level, if (s.activity.kind == "pattern") patternSequence(pack, s.activity.id, s.level) else emptyList(),
                 version, speak, store::save,
                 onDone = { wrong, revealed ->
