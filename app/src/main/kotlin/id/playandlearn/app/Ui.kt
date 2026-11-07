@@ -19,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -170,7 +171,7 @@ fun Shape(token: String, size: Int = 56, highlight: Boolean = false) {
 @Composable
 fun LevelScreen(
     childId: String, activity: ActivityDef, level: Int, sequence: List<String>, version: Int,
-    speak: (String) -> Unit, saveEvent: (id.playandlearn.core.GameEvent) -> Unit,
+    speak: (String) -> Unit, prompt: java.io.File?, playFile: (java.io.File) -> Unit, saveEvent: (id.playandlearn.core.GameEvent) -> Unit,
     onDone: (wrong: Int, revealed: Boolean) -> Unit, onExit: () -> Unit,
 ) {
     val task = activity.levels[level - 1]
@@ -180,11 +181,13 @@ fun LevelScreen(
     var selectedItem by remember { mutableStateOf<String?>(null) }
     var placed by remember { mutableStateOf(setOf<String>()) }
 
+    // Instruksi suara saat level mulai (bila ada rekaman); diulang pada petunjuk tingkat 1.
+    LaunchedEffect(Unit) { prompt?.let(playFile) }
     fun handle(a: Answer) {
         when (val f = session.answer(a)) {
             Feedback.Correct -> { speak("Bagus!"); if (a is Answer.Place) placed = placed + a.itemId; selectedItem = null }
             Feedback.LevelCompleted -> { speak("Hebat!"); onDone(session.wrongAttempts, revealedAny) }
-            is Feedback.TryAgain -> { speak("Coba lagi ya"); if (f.hintLevel >= 2) highlight = (task as? Task.Pattern)?.answer ?: (task as? Task.Count)?.count?.toString() }
+            is Feedback.TryAgain -> { if (f.hintLevel == 1 && prompt != null) playFile(prompt) else speak("Coba lagi ya"); if (f.hintLevel >= 2) highlight = (task as? Task.Pattern)?.answer ?: (task as? Task.Count)?.count?.toString() }
             is Feedback.Revealed -> { revealedAny = true; highlight = f.correct; speak("Ini jawabannya"); if (task !is Task.Sort) onDone(session.wrongAttempts, true) }
         }
     }

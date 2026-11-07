@@ -36,6 +36,20 @@ private sealed interface Screen {
 
 class MainActivity : ComponentActivity() {
     private var tts: TextToSpeech? = null
+    private var player: android.media.MediaPlayer? = null
+
+    /** Putar audio instruksi; kegagalan diam-diam (anak tetap bisa bermain). */
+    private fun playFile(f: java.io.File) {
+        runCatching {
+            tts?.stop(); player?.release()
+            player = android.media.MediaPlayer().apply {
+                setDataSource(f.path)
+                setOnCompletionListener { it.release(); if (player === it) player = null }
+                setOnErrorListener { mp, _, _ -> mp.release(); if (player === mp) player = null; true }
+                prepare(); start()
+            }
+        }
+    }
 
     /** Pemindai QR Google (tanpa izin kamera di aplikasi). */
     private fun scanQr(onCode: (String) -> Unit) {
@@ -47,14 +61,14 @@ class MainActivity : ComponentActivity() {
         tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale("id", "ID") } // suara sintetis = placeholder
         val store = Store(this)
         val api = Api(store)
-        setContent { App(store, api, ::scanQr) { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, null) } }
+        setContent { App(store, api, ::scanQr, ::playFile) { tts?.speak(it, TextToSpeech.QUEUE_FLUSH, null, null) } }
     }
 
-    override fun onDestroy() { tts?.shutdown(); super.onDestroy() }
+    override fun onDestroy() { tts?.shutdown(); player?.release(); super.onDestroy() }
 }
 
 @Composable
-private fun App(store: Store, api: Api, scan: ((String) -> Unit) -> Unit, speak: (String) -> Unit) {
+private fun App(store: Store, api: Api, scan: ((String) -> Unit) -> Unit, playFile: (java.io.File) -> Unit, speak: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf<Screen>(if (store.accessToken == null) Screen.Role else Screen.Home) }
     var child by remember { mutableStateOf(store.childrenJson?.let { childrenFromJson(it).firstOrNull() }) }
@@ -119,7 +133,7 @@ private fun App(store: Store, api: Api, scan: ((String) -> Unit) -> Unit, speak:
                 scope.launch { runCatching { withContext(Dispatchers.IO) { api.sync() } } }
             }
             LevelScreen(c.id, s.activity, s.level, if (s.activity.kind == "pattern") patternSequence(pack, s.activity.id, s.level) else emptyList(),
-                version, speak, store::save,
+                version, speak, store.promptFile(s.activity), playFile, store::save,
                 onDone = { wrong, revealed ->
                     store.setLevel(c.id, s.activity.id, LevelPolicy.nextLevel(s.level, s.activity.levels.size, wrong, revealed)); finish()
                 }, onExit = { finish() })

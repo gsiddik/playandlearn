@@ -4,24 +4,29 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import id.playandlearn.core.AudioMeta
 import id.playandlearn.core.EventType
 import id.playandlearn.core.GameEvent
+import id.playandlearn.core.PromptAudio
 import id.playandlearn.core.ScreenTimePolicy
 import id.playandlearn.core.SessionTracker
 import id.playandlearn.core.SyncBatcher
 import id.playandlearn.core.Task
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.LocalDate
 
 /** Aktivitas dari content pack. Konten diunduh sekali lalu dimainkan offline. */
-data class ActivityDef(val id: String, val kind: String, val levels: List<Task>)
+data class ActivityDef(val id: String, val kind: String, val levels: List<Task>, val promptAudio: String? = null)
 data class ChildDef(val id: String, val alias: String, val birthYear: Int)
 
 /** Penyimpanan lokal (SQLite + SharedPreferences privat). Token disimpan tanpa enkripsi tambahan: TODO Keystore. */
 class Store(ctx: Context) : SQLiteOpenHelper(ctx, "pal.db", null, 1) {
+    /** Audio instruksi hasil unduhan; privat milik aplikasi. */
+    val audioDir: File = File(ctx.filesDir, "audio").apply { mkdirs() }
     private val prefs = ctx.getSharedPreferences("pal", Context.MODE_PRIVATE)
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -72,7 +77,7 @@ fun parseActivities(json: String): List<ActivityDef> {
         val a = acts.getJSONObject(i)
         val kind = a.getString("kind")
         val levels = a.getJSONArray("levels")
-        ActivityDef(a.getString("id"), kind, (0 until levels.length()).map { j ->
+        ActivityDef(a.getString("id"), kind, levels = (0 until levels.length()).map { j ->
             val l = levels.getJSONObject(j)
             when (kind) {
                 "sort" -> Task.Sort(l.getJSONArray("items").let { arr ->
@@ -82,8 +87,19 @@ fun parseActivities(json: String): List<ActivityDef> {
                 "count" -> Task.Count(l.getInt("count"), l.getJSONArray("options").let { o -> (0 until o.length()).map { o.getInt(it) } })
                 else -> error("jenis aktivitas tidak dikenal: $kind")
             }
-        })
+        }, promptAudio = a.optString("promptAudio", "").ifEmpty { null })
     }
+}
+/** Daftar aset audio yang ikut tersimpan bersama pack. */
+fun packAssets(pack: String): Map<String, AudioMeta> {
+    val o = JSONObject(pack).optJSONObject("assets") ?: return emptyMap()
+    return o.keys().asSequence().associateWith { k -> o.getJSONObject(k).let { AudioMeta(it.getString("mime"), it.getString("sha256"), it.optInt("sizeBytes", 0)) } }
+}
+/** Berkas audio instruksi aktivitas bila sudah diunduh dan dapat diputar; selain itu null (pakai suara sintetis). */
+fun Store.promptFile(activity: ActivityDef): File? {
+    val id = activity.promptAudio ?: return null
+    val meta = packJson?.let { packAssets(it)[id] } ?: return null
+    return PromptAudio.fileName(id, meta.mime)?.let { File(audioDir, it) }?.takeIf { it.isFile }
 }
 fun JSONArray.strings() = (0 until length()).map { getString(it) }
 fun patternSequence(json: String, activityId: String, level: Int): List<String> {
@@ -115,6 +131,34 @@ class Api(private val store: Store) {
         val code = c.responseCode
         val text = (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
         return code to text
+    }
+
+    private fun getBytes(path: String): ByteArray {
+        val c = URL(BuildConfig.API_BASE + path).openConnection() as HttpURLConnection
+        c.connectTimeout = 8000; c.readTimeout = 30000
+        store.accessToken?.let { c.setRequestProperty("Authorization", "Bearer $it") }
+        if (c.responseCode !in 200..299) throw HttpError(c.responseCode, "unduh aset")
+        return c.inputStream.use { it.readBytes() }
+    }
+
+    /** Unduh audio instruksi yang belum ada. Gagal = aktivitas tetap jalan dengan suara sintetis; dicoba lagi saat sinkron berikutnya. */
+    fun downloadAudio() {
+        val pack = store.packJson ?: return
+        val assets = packAssets(pack)
+        val existing = store.audioDir.list()?.toSet() ?: emptySet()
+        for (id in PromptAudio.toDownload(assets, existing)) runCatching {
+            val meta = assets.getValue(id)
+            val bytes = getBytes("/assets/$id/file")
+            if (bytes.size > 5 * 1024 * 1024) return@runCatching
+            val sha = PromptAudio.hex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+            if (sha != meta.sha256) return@runCatching // berkas rusak/berubah: jangan simpan
+            val name = PromptAudio.fileName(id, meta.mime) ?: return@runCatching
+            val tmp = File(store.audioDir, "$name.tmp")
+            tmp.writeBytes(bytes); tmp.renameTo(File(store.audioDir, name))
+        }
+        // Buang audio yang tidak lagi dirujuk pack.
+        val keep = assets.mapNotNull { (id, m) -> PromptAudio.fileName(id, m.mime) }.toSet()
+        store.audioDir.listFiles()?.filter { it.name !in keep }?.forEach { it.delete() }
     }
 
     private fun auth(path: String, body: JSONObject) {
@@ -160,8 +204,11 @@ class Api(private val store: Store) {
     fun refreshPack(age: Int) {
         val have = store.packJson?.let { JSONObject(it).optInt("version", 0) } ?: 0
         val (code, text) = call("GET", "/content/packs/latest?age=$age&haveVersion=$have")
-        if (code == 200) store.packJson = JSONObject(text).getJSONObject("manifest").put("version", JSONObject(text).getInt("version")).toString()
-        else if (code != 304) throw HttpError(code, text)
+        if (code == 200) {
+            val r = JSONObject(text)
+            store.packJson = r.getJSONObject("manifest").put("version", r.getInt("version")).put("assets", r.optJSONObject("assets") ?: JSONObject()).toString()
+        } else if (code != 304) throw HttpError(code, text)
+        downloadAudio()
     }
     fun refreshPolicy(childId: String) {
         val (code, text) = call("GET", "/children/$childId/policy")
