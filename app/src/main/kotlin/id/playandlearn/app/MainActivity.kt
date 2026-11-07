@@ -17,6 +17,7 @@ import id.playandlearn.core.PlayDecision
 import id.playandlearn.core.ScreenTimeGuard
 import id.playandlearn.core.SessionTracker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalTime
@@ -108,11 +109,14 @@ private fun App(store: Store, api: Api, scan: ((String) -> Unit) -> Unit, speak:
             val c = child!!
             val pack = store.packJson!!
             val version = org.json.JSONObject(pack).optInt("version", 1)
+            // Sinkron berkala selama bermain agar dasbor guru hampir real-time; gagal = tetap offline.
+            LaunchedEffect(s) { while (true) { delay(10_000); runCatching { withContext(Dispatchers.IO) { api.sync() } } } }
             fun finish() {
                 val end = System.currentTimeMillis()
                 store.addPlayed(((end - startedAt) / 1000).toInt())
                 store.sessionState = SessionTracker.record(store.sessionState, startedAt, end)
                 screen = Screen.Home
+                scope.launch { runCatching { withContext(Dispatchers.IO) { api.sync() } } }
             }
             LevelScreen(c.id, s.activity, s.level, if (s.activity.kind == "pattern") patternSequence(pack, s.activity.id, s.level) else emptyList(),
                 version, speak, store::save,
